@@ -8,9 +8,39 @@ used unmodified. Everything below exists to satisfy what they expect.
 
 ---
 
+## 0. How the repo is meant to be used (Flyway Desktop flow)
+
+```
+schema-model/     <- source of truth. Developers save their dev-database changes here.
+migrations/       <- generated FROM the schema model by Flyway Desktop:
+                     B001 baseline first, then V/U pairs for each change.
+Filter.scpf       <- Redgate compare filter used by schema model / generate / check.
+flyway.toml       <- project config: environments, baselineVersion, Flyway Desktop settings.
+flyway.user.toml  <- gitignored. Your local development + shadow connection strings.
+```
+
+1. Open the repo in Flyway Desktop (it reads `flyway.toml` + `flyway.user.toml`).
+2. Change the **development** database (`Northwind_Dev`).
+3. *Schema model* tab → save the changes to `schema-model/`.
+4. *Generate migrations* tab → Flyway Desktop compares the schema model with the **shadow**
+   database (rebuilt from `migrations/`) and writes `V###_<timestamp>__desc.sql` plus the undo
+   `U###_<timestamp>__desc.sql`.
+5. Commit + push. Pushes to `Development` / `QA` / `Production` that touch `migrations/**`
+   run the corresponding pipeline.
+
+The same steps with the CLI (what produced the current contents):
+
+```powershell
+flyway diff model    -diff.source=development -diff.target=schemaModel
+flyway diff generate -diff.source=schemaModel -diff.target=migrations -diff.buildEnvironment=shadow `
+                     -generate.types=versioned,undo -generate.description=my_change -generate.version=003_<yyyyMMddHHmmss>
+```
+
+---
+
 ## 1. Databases
 
-`provision.ps1` creates five databases on `localhost`:
+`provision.ps1` creates the pipeline databases on `localhost`:
 
 | Database | State | Used by |
 |---|---|---|
@@ -20,8 +50,15 @@ used unmodified. Everything below exists to satisfy what they expect.
 | `Northwind_Prod1` | seeded with Northwind | `deploy-prod.yml` |
 | `Northwind_Prod2` | seeded with Northwind | `deploy-prod.yml`, and the target of the prod check report |
 
-Build and Check start **empty** on purpose — they're throwaway. QA and the two Prods start at
-the `B001` state so that `V002` is genuinely pending against them.
+Plus, for local development with Flyway Desktop (not created by `provision.ps1`):
+
+| Database | State | Used by |
+|---|---|---|
+| `Northwind_Dev` | Northwind + your in-progress changes | Flyway Desktop development environment |
+| `Northwind_Shadow` | empty; rebuilt from `migrations/` on demand | Flyway Desktop shadow environment |
+
+Build, Check and Shadow start **empty** on purpose — they're throwaway. QA and the two Prods start at
+the B001 state so that V002 is genuinely pending against them.
 
 ```powershell
 cd setup
@@ -29,6 +66,22 @@ cd setup
 
 # Start over:
 .\provision.ps1 -Password (Read-Host -AsSecureString "sa password") -Force
+```
+
+`flyway.user.toml` template (gitignored; put your real password in):
+
+```toml
+[environments.development]
+url = "jdbc:sqlserver://localhost;databaseName=Northwind_Dev;encrypt=true;trustServerCertificate=true"
+user = "sa"
+password = "..."
+displayName = "Development database"
+
+[environments.shadow]
+url = "jdbc:sqlserver://localhost;databaseName=Northwind_Shadow;encrypt=true;trustServerCertificate=true"
+user = "sa"
+password = "..."
+displayName = "Shadow database"
 ```
 
 ---
@@ -57,8 +110,8 @@ If it isn't, swap in the machine name or IP.
 
 | Secret | Value |
 |---|---|
-| `FLYWAY_TOKEN` | Flyway Enterprise personal access token from the Redgate portal |
-| `FIRST_UNDO_SCRIPT` | `002.20260925091500` |
+| `FLYWAY_TOKEN` | Flyway Enterprise personal access token from https://identityprovider.red-gate.com/personaltokens |
+| `FIRST_UNDO_SCRIPT` | `002.20260925101444` — the **first version that has an undo script**. `undo -target` is inclusive, so pointing it at the baseline fails. |
 | `DB_USER_BUILD` | `sa` |
 | `DB_USER_PW_BUILD` | your `sa` password |
 | `DB_USER_QA` | `sa` |
@@ -74,20 +127,20 @@ The workflows keep a separate login per environment so you can grant least privi
 deployment. For this demo they're all `sa`; in production the Check and report logins should be
 read-only against the environments they inspect.
 
-> **`instructions.md` is out of date on this.** It lists `DB_USER_NAME_QA`, `DB_USER_PW_QA` and
-> `DB_NAME_PROD_2`. The official workflows use the twelve secrets above instead, and never
-> reference `DB_NAME_PROD_2` — the report artifact is named by the action, not by a variable.
-
 ---
 
 ## 4. Self-hosted runner
 
 All three workflows use `runs-on: self-hosted`, so a runner must be registered to the repo:
-*Settings > Actions > Runners > New self-hosted runner* (Windows).
+*Settings > Actions > Runners > New self-hosted runner* (Windows). Install it as a service.
 
 The runner does **not** need Flyway pre-installed — `red-gate/setup-flyway@v3` downloads and
-licenses Flyway 13.4.0 per job. It does need Git for Windows, and each workflow prepends Git Bash
-to `PATH` because the Redgate actions run their steps under `shell: bash`.
+licenses Flyway 13.4.0 per job. It does need:
+
+- **Git for Windows** — each workflow prepends Git Bash to `PATH` because the Redgate actions run
+  their steps under `shell: bash`.
+- **PowerShell 7 (`pwsh`)**, installed machine-wide — the "Add Git Bash to PATH" step uses
+  `shell: pwsh`. Windows PowerShell 5.1 is not enough; the job fails with `pwsh: command not found`.
 
 ---
 
@@ -98,6 +151,9 @@ to `PATH` because the Redgate actions run their steps under `shell: bash`.
 | `Development` | `deploy-build.yml` | push touching `migrations/**` |
 | `QA` | `deploy-qa.yml` | push touching `migrations/**` |
 | `Production` | `deploy-prod.yml` | push touching `migrations/**` |
+
+Note: GitHub does not evaluate the `paths` filter on the *first* push of a brand-new branch, so
+creating a branch does not by itself trigger a run — the next push that touches `migrations/**` does.
 
 ---
 
