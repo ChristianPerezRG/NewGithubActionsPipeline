@@ -27,31 +27,4 @@ schemaModel = "schema-model"
 shadowEnvironment = "shadow"
 
 [redgateCompare]
-filterFile = "Filter.scpf"nsPipeline"
-
-[environments.build]
-provisioner = "clean"
-
-[environments.shadow]
-provisioner = "clean"
-
-[flyway]
-baselineOnMigrate = true
-baselineVersion = "001.20260925101351"
-cleanDisabled = true
-locations = [ "filesystem:migrations" ]
-mixed = true
-outOfOrder = true
-schemaModelLocation = "schema-model"
-validateMigrationNaming = true
-
-[flyway.check]
-majorTolerance = 0
-
-[flywayDesktop]
-developmentEnvironment = "development"
-schemaModel = "schema-model"
-shadowEnvironment = "shadow"
-
-[redgateCompare]
 filterFile = "Filter.scpf"
