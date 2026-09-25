@@ -56,7 +56,7 @@ up, change the supporting config — not the workflows.
 - **Variables set:** `USER_EMAIL`, `JDBC_BUILD`, `JDBC_QA`, `JDBC_CHECK`, `JDBC_PROD1`, `JDBC_PROD2`
 - **Secrets set:** `FIRST_UNDO_SCRIPT` (= `002.20260925091500`), `DB_USER_*` (= `sa`) and `DB_USER_PW_*` for BUILD/QA/CHECK/PROD1/PROD2
 - **Secret NOT yet set:** `FLYWAY_TOKEN` — needs a Flyway Enterprise personal access token from
-  https://identity.red-gate.com/personaltokens for the `USER_EMAIL` account. Every job fails at
+  https://identityprovider.red-gate.com/personaltokens for the `USER_EMAIL` account. Every job fails at
   "Setup Flyway" until this exists.
 - Branches `Development`, `QA`, `Production` exist locally, not yet pushed (pushing triggers the runs).
 
