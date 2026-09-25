@@ -2,23 +2,27 @@
 
 Everything needed to make the three workflows in `.github/workflows/` run against real databases.
 
-The single workflow in `.github/workflows/flyway-pipeline.yml` is a consolidation of Redgate's
+The three workflows in `.github/workflows/` are a GitHub Actions port of Redgate's
 [Flyway-Sample-Pipelines/Azure/Simple-Workflow](https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/Azure/Simple-Workflow)
-(deploy-build + deploy-qa + deploy-prod) into one run. Same Flyway CLI commands, same variables.
-Stages are jobs chained with `needs`; the Azure `ManualValidation` stage is the `production`
-GitHub Environment with a required reviewer; `PublishBuildArtifacts` is `actions/upload-artifact`.
-`red-gate/setup-flyway` installs Flyway 13.4.0 on the runner per job, so nothing is pre-installed.
+(`deploy-build.yml`, `deploy-qa.yml`, `deploy-prod.yml`): same stages, same Flyway CLI commands,
+same variables. Azure stages are GitHub jobs chained with `needs`; Azure variable groups are repo
+Variables/Secrets; the Azure `ManualValidation` stage is the `production` GitHub Environment with a
+required reviewer; `PublishBuildArtifacts` is `actions/upload-artifact`. `red-gate/setup-flyway`
+installs Flyway 13.4.0 on the runner per job, so nothing is pre-installed.
+
+**One run, not three.** `deploy-build.yml` is the only file with a push trigger. After its Build
+stages pass it calls `deploy-qa.yml`, then `deploy-prod.yml`, as reusable workflows
+(`workflow_call`), so every stage shows on a single run page - no clicking from Build to QA to
+Production. `deploy-qa.yml` / `deploy-prod.yml` can still be queued alone with *Run workflow*.
 
 **Trigger:** a push to `main` that touches `migrations/**` (i.e. committing a generated migration
-script), or *Run workflow* in the Actions tab.
+script), or *Run workflow* on "Flyway Pipeline".
 
-| # | Job | What it does |
-|---|---|---|
-| 1 | **Build Database** | `info clean info` → `migrate info` → `undo info -target=FIRST_UNDO_SCRIPT` against the Build DB. Fails if any V or U script is broken. |
-| 2 | **QA Check Report** | `check -code -changes -drift -dryrun` vs QA, using the Check DB as build environment. Artifact `qa-check-report`. |
-| 3 | **Deploy QA** | `info migrate info` against QA. |
-| 4 | **Production Check Report** | Same check vs Production. Artifact `prod-check-report`, for the approver. |
-| 5 | **Deploy Prod** | Waits for approval on the `production` environment, then `info migrate info` against Production. |
+| File | Jobs |
+|---|---|
+| `deploy-build.yml` | **Build Database** (`info clean info` → `migrate info` → `undo info -target=FIRST_UNDO_SCRIPT`) → **QA Check Report** (artifact `qa-check-report`) → calls QA → calls Production |
+| `deploy-qa.yml` | **Deploy QA** (`info migrate info`) → **Production Check Report** (promotion preview, artifact `prod-check-report-after-qa`) |
+| `deploy-prod.yml` | **Production Check Report** (fresh, artifact `prod-check-report`) → **Deploy Prod** (waits for approval on the `production` environment). No second tenant. |
 
 ---
 
