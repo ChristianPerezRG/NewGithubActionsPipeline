@@ -11,9 +11,7 @@ the source of truth** and all migration scripts generated from it (Flyway Deskto
 
 ```
 .github/workflows/
-  deploy-build.yml     # Development -> Build Database job, then QA Check Report job
-  deploy-qa.yml        # QA          -> Deploy QA job, then Production Check Report job
-  deploy-prod.yml      # Production  -> Production Check Report -> Deploy Prod (approval) -> Deploy Prod2
+  flyway-pipeline.yml  # ONE workflow: Build Database -> QA Check Report -> Deploy QA -> Production Check Report -> [approval] -> Deploy Prod
 schema-model/          # SOURCE OF TRUTH. Northwind + loyalty change. Tables/, Views/, Stored Procedures/
 migrations/            # GENERATED from schema-model, in this order:
   B001_20260925101351__baseline.sql              # baseline (schema only), from the model vs empty shadow
@@ -41,16 +39,19 @@ Order matters and mirrors what a developer does in Flyway Desktop:
 
 An earlier iteration hand-wrote V001/V002/U002 with data. That was thrown away.
 
-### The three workflows are a port of the Azure Simple-Workflow sample
+### The workflow is a consolidation of the Azure Simple-Workflow sample
 
-Per the user's request they mirror
+Per the user's requests it (a) mirrors
 [red-gate/Flyway-Sample-Pipelines → Azure/Simple-Workflow](https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/Azure/Simple-Workflow)
-stage for stage and command for command (plain Flyway CLI: `info clean info`, `migrate info`,
-`undo info`, `check -code -changes -drift -dryrun`). `red-gate/setup-flyway@v3` (pinned to 13.4.0)
-installs the CLI per job. The manual approval is the `production` GitHub Environment (required
-reviewer: ChristianPerezRG; deployment branch rule: `Production`). `workflow_dispatch` is enabled
-on all three so they can be queued manually like Azure pipelines. See `setup/README.md` §0 and §6.
-An earlier iteration used the `flyway-actions` composite-action samples verbatim; replaced.
+command for command (plain Flyway CLI: `info clean info`, `migrate info`, `undo info`,
+`check -code -changes -drift -dryrun`), and (b) runs the whole thing as ONE workflow so nobody
+has to click through Build, then QA, then Production: five jobs chained with `needs`, triggered by
+a push to `main` touching `migrations/**`. Prod2 (second tenant) was dropped. The approval before
+Deploy Prod is the `production` GitHub Environment (required reviewer: ChristianPerezRG;
+deployment branch rules: `main`, `Production`). `workflow_dispatch` is enabled.
+Earlier iterations: the `flyway-actions` composite-action samples verbatim, then three separate
+Azure-shaped workflows on Development/QA/Production branches. Those branches still exist but are
+dormant (they contain no workflow files any more) and can be deleted.
 
 ---
 
@@ -73,7 +74,7 @@ An earlier iteration used the `flyway-actions` composite-action samples verbatim
 - **Variables:** `USER_EMAIL`, `BASELINE_VERSION`, `JDBC_BUILD`, `JDBC_QA`, `JDBC_CHECK`, `JDBC_PROD1`, `JDBC_PROD2`
 - **Secrets:** `FLYWAY_TOKEN`, `FIRST_UNDO_SCRIPT` (= `002.20260925101444`), `DB_USER_*` (= `sa`) and
   `DB_USER_PW_*` for BUILD/QA/CHECK/PROD1/PROD2
-- Branches: `main` is the integration branch; `Development`, `QA`, `Production` trigger the pipelines.
+- Branches: `main` is the only branch that triggers the pipeline.
 
 ---
 

@@ -2,19 +2,23 @@
 
 Everything needed to make the three workflows in `.github/workflows/` run against real databases.
 
-The workflows are a GitHub Actions port of Redgate's
-[Flyway-Sample-Pipelines/Azure/Simple-Workflow](https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/Azure/Simple-Workflow):
-same stages, same Flyway CLI commands, same variables. Azure stages are GitHub jobs chained with
-`needs`; Azure variable groups are repo Variables/Secrets; the Azure `ManualValidation` stage is the
-`production` GitHub Environment with a required reviewer; `PublishBuildArtifacts` is
-`actions/upload-artifact`. `red-gate/setup-flyway` installs Flyway 13.4.0 on the runner per job, so
-nothing has to be pre-installed.
+The single workflow in `.github/workflows/flyway-pipeline.yml` is a consolidation of Redgate's
+[Flyway-Sample-Pipelines/Azure/Simple-Workflow](https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/Azure/Simple-Workflow)
+(deploy-build + deploy-qa + deploy-prod) into one run. Same Flyway CLI commands, same variables.
+Stages are jobs chained with `needs`; the Azure `ManualValidation` stage is the `production`
+GitHub Environment with a required reviewer; `PublishBuildArtifacts` is `actions/upload-artifact`.
+`red-gate/setup-flyway` installs Flyway 13.4.0 on the runner per job, so nothing is pre-installed.
 
-| Workflow | Stages (jobs) |
-|---|---|
-| `deploy-build.yml` | **Build Database** (info clean info → migrate info → undo info to `FIRST_UNDO_SCRIPT`) → **QA Check Report** (check -code -changes -drift -dryrun vs QA, artifact `qa-check-report`) |
-| `deploy-qa.yml` | **Deploy QA** (info migrate info) → **Production Check Report** (promotion preview vs Prod1, artifact `prod-check-report`) |
-| `deploy-prod.yml` | **Production Check Report** (vs Prod1) → **Deploy Prod** (waits for approval on the `production` environment) → **Deploy Prod2** (second tenant, sequential) |
+**Trigger:** a push to `main` that touches `migrations/**` (i.e. committing a generated migration
+script), or *Run workflow* in the Actions tab.
+
+| # | Job | What it does |
+|---|---|---|
+| 1 | **Build Database** | `info clean info` → `migrate info` → `undo info -target=FIRST_UNDO_SCRIPT` against the Build DB. Fails if any V or U script is broken. |
+| 2 | **QA Check Report** | `check -code -changes -drift -dryrun` vs QA, using the Check DB as build environment. Artifact `qa-check-report`. |
+| 3 | **Deploy QA** | `info migrate info` against QA. |
+| 4 | **Production Check Report** | Same check vs Production. Artifact `prod-check-report`, for the approver. |
+| 5 | **Deploy Prod** | Waits for approval on the `production` environment, then `info migrate info` against Production. |
 
 ---
 
@@ -35,8 +39,7 @@ flyway.user.toml  <- gitignored. Your local development + shadow connection stri
 4. *Generate migrations* tab → Flyway Desktop compares the schema model with the **shadow**
    database (rebuilt from `migrations/`) and writes `V###_<timestamp>__desc.sql` plus the undo
    `U###_<timestamp>__desc.sql`.
-5. Commit + push. Pushes to `Development` / `QA` / `Production` that touch `migrations/**`
-   run the corresponding pipeline.
+5. Commit + push to `main`. The push (it touches `migrations/**`) starts the pipeline.
 
 The same steps with the CLI (what produced the current contents):
 
@@ -54,11 +57,11 @@ flyway diff generate -diff.source=schemaModel -diff.target=migrations -diff.buil
 
 | Database | State | Used by |
 |---|---|---|
-| `Northwind_Build` | empty | `deploy-build.yml` — wiped and rebuilt every run |
-| `Northwind_Check` | empty | check reports in `deploy-build.yml` and `deploy-prod.yml` — erased every run |
-| `Northwind_QA` | seeded with Northwind | `deploy-qa.yml` |
-| `Northwind_Prod1` | seeded with Northwind | `deploy-prod.yml` |
-| `Northwind_Prod2` | seeded with Northwind | `deploy-prod.yml`, and the target of the prod check report |
+| `Northwind_Build` | empty | job 1 — wiped and rebuilt every run |
+| `Northwind_Check` | empty | jobs 2 and 4 — erased every run |
+| `Northwind_QA` | seeded with Northwind | jobs 2 and 3 |
+| `Northwind_Prod1` | seeded with Northwind | jobs 4 and 5 |
+| `Northwind_Prod2` | seeded with Northwind | not used by the consolidated pipeline (was the second tenant) |
 
 Plus, for local development with Flyway Desktop (not created by `provision.ps1`):
 
@@ -108,7 +111,6 @@ displayName = "Shadow database"
 | `JDBC_QA` | `jdbc:sqlserver://localhost;databaseName=Northwind_QA;encrypt=true;trustServerCertificate=true` |
 | `JDBC_CHECK` | `jdbc:sqlserver://localhost;databaseName=Northwind_Check;encrypt=true;trustServerCertificate=true` |
 | `JDBC_PROD1` | `jdbc:sqlserver://localhost;databaseName=Northwind_Prod1;encrypt=true;trustServerCertificate=true` |
-| `JDBC_PROD2` | `jdbc:sqlserver://localhost;databaseName=Northwind_Prod2;encrypt=true;trustServerCertificate=true` |
 
 `localhost` only resolves correctly if the self-hosted runner is on the same machine as SQL Server.
 If it isn't, swap in the machine name or IP.
@@ -131,8 +133,6 @@ If it isn't, swap in the machine name or IP.
 | `DB_USER_PW_CHECK` | your `sa` password |
 | `DB_USER_PROD1` | `sa` |
 | `DB_USER_PW_PROD1` | your `sa` password |
-| `DB_USER_PROD2` | `sa` |
-| `DB_USER_PW_PROD2` | your `sa` password |
 
 The workflows keep a separate login per environment so you can grant least privilege in a real
 deployment. For this demo they're all `sa`; in production the Check and report logins should be
@@ -153,25 +153,20 @@ Windows agent, so no Git Bash or PowerShell 7 requirement.
 
 ## 5. Branches
 
-| Branch | Workflow | Trigger |
-|---|---|---|
-| `Development` | `deploy-build.yml` | push touching `migrations/**` |
-| `QA` | `deploy-qa.yml` | push touching `migrations/**` |
-| `Production` | `deploy-prod.yml` | push touching `migrations/**` |
+`main` is the only branch the pipeline watches. Developers commit schema-model + generated
+migration changes from Flyway Desktop to `main` (directly or via pull request); the push starts the
+run. The older `Development` / `QA` / `Production` branches are no longer used and can be deleted.
 
-Note: GitHub does not evaluate the `paths` filter on the *first* push of a brand-new branch, so
-creating a branch does not by itself trigger a run — the next push that touches `migrations/**` does.
+Note: GitHub does not evaluate the `paths` filter on the *first* push of a brand-new branch.
 
 ---
 
 ## 6. Approval gate
 
-`deploy-prod.yml` mirrors the Azure sample's **Approve Production Release** stage with a GitHub
-Environment: the `Deploy Prod` job has `environment: production`, and that environment
-(*Settings > Environments > production*) has **Required reviewers** set. The run pauses after the
-report job; open the run, read the `prod-check-report` artifact, then *Review deployments* → approve.
-`Deploy Prod2` only runs after `Deploy Prod` succeeds.
+`Deploy Prod` has `environment: production`, and that environment (*Settings > Environments >
+production*) has **Required reviewers** set. The run pauses after the Production Check Report;
+open the run, read the `prod-check-report` artifact, then *Review deployments* → approve.
 
-The environment also has a deployment branch rule allowing only `Production`. Both were created
-with the GitHub API; to recreate by hand: create environment `production`, tick *Required
-reviewers* and add yourself, and under *Deployment branches* add the `Production` branch.
+The environment's deployment branch rules allow `main`. Both were created with the GitHub API;
+to recreate by hand: create environment `production`, tick *Required reviewers* and add
+yourself, and under *Deployment branches* add `main`.
