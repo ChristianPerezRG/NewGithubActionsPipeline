@@ -1,8 +1,6 @@
 # Handoff — Flyway + GitHub Actions pipeline
 
-Context for picking this up in Claude Code CLI, where the shell can actually reach SQL Server.
-
-**Target repo:** https://github.com/ChristianPerezRG/NewGithubActionsPipeline (currently empty)
+**Target repo:** https://github.com/ChristianPerezRG/NewGithubActionsPipeline
 **Goal:** a working Flyway Enterprise pipeline against real SQL Server databases on `localhost`,
 using Redgate's official GitHub Actions sample workflows unmodified.
 
@@ -12,13 +10,14 @@ using Redgate's official GitHub Actions sample workflows unmodified.
 
 ```
 .github/workflows/
-  deploy-build.yml     # Development branch -> Build DB
+  deploy-build.yml     # Development branch -> Build DB (clean/migrate/undo) + QA check report
   deploy-qa.yml        # QA branch          -> QA DB
-  deploy-prod.yml      # Production branch  -> Prod1 + Prod2
+  deploy-prod.yml      # Production branch  -> report vs Prod2, then Prod1 + Prod2
 flyway.toml            # committed project config
+flyway.user.toml       # GITIGNORED - local sa credentials for the five databases
 .gitignore
 migrations/
-  V001_20260925090000__baseline_northwind.sql          # Northwind schema + data (~1 MB)
+  B001_20260925090000__baseline_northwind.sql          # Northwind schema + data (~1 MB), BASELINE migration
   V002_20260925091500__add_customer_loyalty.sql        # demo change
   U002_20260925091500__UNDO-add_customer_loyalty.sql   # paired undo
 setup/
@@ -39,87 +38,91 @@ up, change the supporting config — not the workflows.
 
 ---
 
-## Status: verified vs. not
+## Environment (machine `US-LT-CHRISTIAN`, set up 2026-09-25)
 
-### Verified (statically)
+| Thing | Where / value |
+|---|---|
+| SQL Server | **SQL Server 2022 Express (16.0.1000.6)**, default instance `MSSQLSERVER`, TCP **1433** fixed, SQL + Windows auth. Service auto-start. `RED-GATE\Christian.Perez` is sysadmin. |
+| `sa` password | `C:\Users\christian.perez\tools\sa-password.txt` (also in the gitignored `flyway.user.toml`) |
+| Databases | `Northwind_Build`, `Northwind_Check` (empty); `Northwind_QA`, `Northwind_Prod1`, `Northwind_Prod2` (seeded, 13 tables, **no** schema history yet) |
+| Flyway CLI | `C:\Users\christian.perez\tools\flyway-13.4.0\flyway.cmd` — licensed **Enterprise** via `flyway auth` (Redgate online auth). Not on PATH. |
+| GitHub CLI | `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_Microsoft.Winget.Source_8wekyb3d8bbwe\bin\gh.exe`, logged in as ChristianPerezRG. Not on PATH until a new shell. |
+| Runner | `C:\actions-runner`, Windows service `actions.runner.ChristianPerezRG-NewGithubActionsPipeline.US-LT-CHRISTIAN` (NETWORK SERVICE, delayed auto-start). Labels `self-hosted,Windows,X64,sqlserver-local`. |
+| Install media | `C:\Users\christian.perez\SQLExpressMedia` — can be deleted. |
 
-- All three workflows parse as valid YAML; jobs and dependencies resolve
-- Migration filenames match the enforced `V{version}_{timestamp}__{description}.sql` pattern
-- V002 and U002 pair correctly on version `002.20260925091500`
-- `baselineVersion` in `flyway.toml` matches V001's resolved version `001.20260925090000`
-- V001 is clean UTF-8, 408 `GO` batches, no NUL bytes or replacement characters
-- Every migration starts with the required `SET NUMERIC_ROUNDABORT OFF` header
-- The 6 variables and 12 secrets referenced by the workflows are all documented in `setup/README.md`
+### GitHub repo state
 
-### NOT verified — nothing has touched a database
-
-- `provision.ps1` has **never been executed**. Written blind, not debugged.
-- V001 has never been run against SQL Server. It's the stock Microsoft Northwind script with a
-  header prepended, but Flyway's SQL Server parser has not been asked to chew through it.
-- V002/U002 have never been run. The `sp_refreshview` calls name five views by string; if any name
-  is wrong it fails at runtime, not at parse time.
-- `baselineVersion` is the highest-risk guess in the whole setup. One `flyway info` settles it.
-- No self-hosted runner exists yet.
+- `main` pushed with everything above.
+- **Variables set:** `USER_EMAIL`, `JDBC_BUILD`, `JDBC_QA`, `JDBC_CHECK`, `JDBC_PROD1`, `JDBC_PROD2`
+- **Secrets set:** `FIRST_UNDO_SCRIPT` (= `002.20260925091500`), `DB_USER_*` (= `sa`) and `DB_USER_PW_*` for BUILD/QA/CHECK/PROD1/PROD2
+- **Secret NOT yet set:** `FLYWAY_TOKEN` — needs a Flyway Enterprise personal access token from
+  https://identity.red-gate.com/personaltokens for the `USER_EMAIL` account. Every job fails at
+  "Setup Flyway" until this exists.
+- Branches `Development`, `QA`, `Production` exist locally, not yet pushed (pushing triggers the runs).
 
 ---
 
-## Run this first
+## Verified against real databases (Flyway 13.4.0 Enterprise, local CLI)
 
-```powershell
-# 1. Provision. Expect to debug this — it's never been run.
-cd setup
-.\provision.ps1 -Password (Read-Host -AsSecureString "sa password")
+| Check | Result |
+|---|---|
+| `provision.ps1` | Works first time. 5 DBs, 3 seeded with 13 tables. |
+| Build from empty (`clean` + `migrate`) | B001 then V002 applied, ~1.5 s. |
+| `undo -target=002.20260925091500` | Undoes V002 cleanly, Build left at 001. |
+| `migrate` against a seeded copy (what deploy-qa does) | "Successfully baselined schema with version 001.20260925090000", V002 applied, B001 shown as `Ignored (Baseline)`. `baselineVersion` is right. |
+| `check -changes -drift -dryrun -code` with build env `check`, invoked with the exact flags the checks action passes | Exit 0 both against a not-yet-deployed seeded copy and against a baselined + V002 copy. HTML/JSON/SARIF produced. |
 
-# 2. Prove V001 builds from empty, against the Build DB.
-flyway migrate -url="jdbc:sqlserver://localhost;databaseName=Northwind_Build;encrypt=true;trustServerCertificate=true" `
-               -user=sa -password=<pw> -locations="filesystem:migrations"
+## Two things the first handoff got wrong (fixed)
 
-# 3. Prove the undo works — this is what deploy-build.yml validates.
-flyway undo -target=001.20260925090000 -url="...Northwind_Build..." -user=sa -password=<pw> `
-            -locations="filesystem:migrations"
+1. **V001 had to become B001.** With a plain versioned V001 as the baseline, `flyway check`
+   could not rebuild the Check DB to match a baselined target: Flyway skips V001 (below/at
+   baseline) and V002 then fails with "Cannot find the object dbo.Customers". A Flyway
+   *baseline migration* (`B` prefix) is designed for exactly this: it runs on empty databases
+   (Build, Check) and is skipped on databases baselined at that version (QA, Prod). Reproduced
+   and verified.
+2. **`FIRST_UNDO_SCRIPT` is `002.20260925091500`, not `001…`.** `undo -target` is inclusive —
+   targeting 001 tries to undo the baseline itself and errors "no corresponding undo migration".
 
-# 4. THE IMPORTANT ONE. Against a seeded DB, V001 must show as 'Baseline' or 'Ignored'
-#    and V002 as 'Pending'. If V001 shows 'Pending', baselineVersion is wrong.
-flyway info -url="jdbc:sqlserver://localhost;databaseName=Northwind_QA;encrypt=true;trustServerCertificate=true" `
-            -user=sa -password=<pw> -locations="filesystem:migrations"
-```
+## Expected behaviour on the first pipeline runs
 
-Steps 2–4 catch everything that could go wrong before a runner is involved at all.
+- **Development → deploy-build:** Build is reprovisioned (clean) and rebuilt, V002 undone, then
+  the QA check report runs. On this very first run the drift section will report the whole
+  Northwind schema as drift, because QA has no schema history / snapshot yet. `fail-on-drift`
+  is `false` there, so the job still passes. A `drift-resolution` artifact is uploaded. After
+  QA has been deployed once (snapshot saved), later reports should show no drift.
+- **QA → deploy-qa:** baselines QA at 001, applies V002, saves a snapshot. The deploy action
+  logs "Drift check not run - skipped because no snapshot in database (expected for initial
+  deployment)".
+- **Production → deploy-prod:** report vs Prod2 (same first-run drift caveat), then Prod1 and
+  Prod2 deploy in parallel, same as QA.
 
 ---
 
 ## Open questions
 
-1. **`instructions.md` conflicts with the official workflows on secret names.** It specifies
-   `DB_USER_NAME_QA` / `DB_USER_PW_QA` / `DB_NAME_PROD_2`; the workflows use twelve per-environment
-   secrets and no `DB_NAME_PROD_2`. Resolved in favour of the workflows. Confirm that's right, and
-   consider updating `instructions.md` so the repo doesn't ship contradicting itself.
-
-2. **No approval gate on production.** The upstream `deploy-prod.yml` only comments on the option.
-   Adding `environment: production` to the two deploy jobs is the one upstream edit worth making —
-   see `setup/README.md` §6. Deliberately not applied.
-
-3. **`sa` everywhere.** Fine for a local demo; wrong for a ProServ reference. The workflows already
-   separate logins per environment, so tightening this is config-only — Check and report logins
-   should be read-only.
-
-4. **`localhost` in the JDBC strings** only works if the runner is on the same machine as SQL Server.
-
-5. **Northwind vs. the `instructions.md` DemoDB naming.** Databases are `Northwind_*`. Rename if the
-   ProServ demo should read as `DemoDB`.
+1. **`instructions.md` (in Downloads, not in the repo) conflicts with the official workflows** on
+   secret names (`DB_USER_NAME_QA` / `DB_NAME_PROD_2`) and on `FIRST_UNDO_SCRIPT` (`001`).
+   Resolved in favour of the workflows. Update or drop `instructions.md`.
+2. **No approval gate on production.** Adding `environment: production` to the two deploy jobs
+   is the one upstream edit worth making — see `setup/README.md` §6. Deliberately not applied.
+3. **`sa` everywhere.** Fine for a local demo; wrong for a ProServ reference. Config-only fix.
+4. **`localhost` in the JDBC strings** only works because the runner is on the SQL Server machine.
+5. **Northwind vs. `DemoDB` naming.** Databases are `Northwind_*`.
 
 ---
 
 ## Things that will bite
 
-- **Git Bash on PATH.** Each workflow prepends `C:\Program Files\Git\bin` because the Redgate actions
-  run under `shell: bash`, and Git for Windows' default install exposes only `Git\cmd`. Without it,
-  `bash` resolves to WSL and can't read Windows paths. Don't remove those steps.
-- **`provisioner = "clean"` on `[environments.build]`** is required — `deploy-build.yml` uses
-  `provision-mode: reprovision`, which is what actually wipes the Build DB. Remove it and the build
-  stops being a real from-scratch test, silently.
-- **`cleanDisabled`** is `true` globally and overridden for Build only, inline in the workflow.
-- **V001 is ~1 MB / 9,376 lines.** Slow first Build run. Not a hang.
-- **Flyway reads `_` as a version separator**, so `V001_20260925090000` is version
-  `001.20260925090000`, not `001`. This is why `baselineVersion` and `FIRST_UNDO_SCRIPT` are both
-  full dotted versions rather than `001`.
+- **Git Bash on PATH.** Each workflow prepends `C:\Program Files\Git\bin` because the Redgate
+  actions run under `shell: bash`. Don't remove those steps.
+- **`provisioner = "clean"` on `[environments.build]`** is required for `provision-mode: reprovision`.
+- **`cleanDisabled`** is `true` globally; the Build step overrides it inline, and the checks action
+  passes `-environments.check.flyway.cleanDisabled=false` because of `build-ok-to-erase: true`.
+- **`flyway check -drift` writes a `drift-resolution/` folder into the working directory.**
+  It's gitignored now; it slipped into an early commit once.
+- **Flyway reads `_` as a version separator**, so `B001_20260925090000` is version
+  `001.20260925090000`. `baselineVersion` and `FIRST_UNDO_SCRIPT` are full dotted versions.
+- **Installing SQL Server on this laptop** failed twice on Windows Installer error 1706 because the
+  cached sources for the already-installed ODBC Driver 17 (17.10.6.1) and OLE DB Driver 18
+  (18.7.4.0) were gone. Fix was to download those exact MSIs, name them `msodbcsql.msi` /
+  `msoledbsql.msi`, and re-run `msiexec /i` to re-register the source before SQL setup.
