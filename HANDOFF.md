@@ -103,6 +103,7 @@ and are **not to be rewritten**. They use `red-gate/setup-flyway@v3` (pinned to 
   those exact MSIs, name them `msodbcsql.msi` / `msoledbsql.msi`, `msiexec /i` to re-register.
 - **Runner service install failed** with "ACL not in canonical form" because the folder was created
   from Git Bash. `icacls C:\actions-runner /reset /T` then reconfigure.
+- **Flyway Desktop rewrites `flyway.toml` on first open** (drops comments, reorders keys, adds `id`). On 2026-09-25 it also left a fragment of the old file after its own content, producing "Error parsing config file ... filterFile". Fix: keep its normalized version and delete everything after `[redgateCompare]`.
 
 ---
 
