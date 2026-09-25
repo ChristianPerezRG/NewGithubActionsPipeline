@@ -1,60 +1,114 @@
-name: Flyway GitHub Actions QA Workflow
-# Uses the official Redgate actions (red-gate/setup-flyway + red-gate/flyway-actions).
-# No pre-installed Flyway CLI needed - setup-flyway downloads and licenses it per job.
-# For the equivalent pipeline calling a pre-installed Flyway CLI, see the flyway-cli folder.
+# Deploy migrations to the QA DB, then report on Production.
+# GitHub Actions port of Flyway-Sample-Pipelines/Azure/Simple-Workflow/deploy-qa.yml.
+
+name: Flyway GitHub Actions QA Pipeline
+
 on:
   push:
     branches:
       - QA
     paths:
       - "migrations/**"
+  workflow_dispatch:
 
-# Environment Variables
 env:
-  # Repository Variables - Create these in Settings > Secrets and variables > Actions > Variables
-  EMAIL: ${{ vars.USER_EMAIL }} # Email registered to your Flyway license
-  JDBC_QA: ${{ vars.JDBC_QA }} # e.g. jdbc:sqlserver://<host>;databaseName=<QADB>;trustServerCertificate=true
+  # Repository Variables
+  BASELINE_VERSION: ${{ vars.BASELINE_VERSION }}
+  JDBC_QA: ${{ vars.JDBC_QA }}
+  JDBC_PROD1: ${{ vars.JDBC_PROD1 }} # Azure 'prod_database_JDBC' - target of the promotion preview report
+  JDBC_CHECK: ${{ vars.JDBC_CHECK }}
+  EMAIL: ${{ vars.USER_EMAIL }}
 
-  # Repository Secrets - Create these in Settings > Secrets and variables > Actions > Secrets
-  TOKEN: ${{ secrets.FLYWAY_TOKEN }} # Flyway license token (PAT)
+  # Repository Secrets
+  TOKEN: ${{ secrets.FLYWAY_TOKEN }}
   DB_USER_QA: ${{ secrets.DB_USER_QA }}
   DB_USER_PW_QA: ${{ secrets.DB_USER_PW_QA }}
+  DB_USER_PROD1: ${{ secrets.DB_USER_PROD1 }}
+  DB_USER_PW_PROD1: ${{ secrets.DB_USER_PW_PROD1 }}
+  DB_USER_CHECK: ${{ secrets.DB_USER_CHECK }}
+  DB_USER_PW_CHECK: ${{ secrets.DB_USER_PW_CHECK }}
+
+  FLYWAY: >-
+    flyway -email="${{ vars.USER_EMAIL }}" -token="${{ secrets.FLYWAY_TOKEN }}"
+    -locations="filesystem:${{ github.workspace }}\migrations"
+    -configFiles="${{ github.workspace }}\flyway.toml"
+    -baselineOnMigrate=true -baselineVersion=${{ vars.BASELINE_VERSION }}
+    -errorOverrides=S0001:0:I-
+
+  # Blank these out to use Windows integrated security instead (see setup/README.md)
+  QA_LOGIN: -user="${{ secrets.DB_USER_QA }}" -password="${{ secrets.DB_USER_PW_QA }}"
+  PROD_LOGIN: -user="${{ secrets.DB_USER_PROD1 }}" -password="${{ secrets.DB_USER_PW_PROD1 }}"
+  CHECK_LOGIN: -environments.check.user="${{ secrets.DB_USER_CHECK }}" -environments.check.password="${{ secrets.DB_USER_PW_CHECK }}"
 
 jobs:
-  flyway-deploy-qa:
-    runs-on: self-hosted # Runner to execute the job
-    # runs-on: ubuntu-latest
+  # ------------------------------------------------------------- stage: DeployQA
+  deploy-qa:
+    name: Deploy QA
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          clean: true
 
-    steps: # Steps run strictly in order and stop on the first failure
-      - uses: actions/checkout@v5 # Checks out the commit that triggered this run
-
-      # NOTE: Windows runners only - not required on Linux runners, where bash is native.
-      # Git for Windows' default install puts only Git\cmd on PATH (git.exe, no bash.exe),
-      # so `shell: bash` inside the Flyway actions resolves to WSL's bash, which cannot
-      # read the Windows script path. This puts Git Bash ahead of it.
-      - name: Add Git Bash to PATH
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          "C:\Program Files\Git\bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
-          "C:\Program Files\Git\usr\bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
-
-      # Installs the Flyway CLI on the runner and adds it to PATH
       - name: Setup Flyway
         uses: red-gate/setup-flyway@v3
         with:
-          version: "13.4.0" # Pin for reproducible runs - bump deliberately
+          version: "13.4.0"
           edition: enterprise
           i-agree-to-the-eula: true
           email: ${{ env.EMAIL }}
           token: ${{ env.TOKEN }}
 
-      # Drift check and snapshot are left at their defaults (enabled), so each QA
-      # deployment stores a snapshot - this is what makes drift detection meaningful.
-      - name: Deploy to QA
-        uses: red-gate/flyway-actions/migrations/deploy@v2
+      - name: Deploy QA
+        run: ${{ env.FLYWAY }} ${{ env.QA_LOGIN }} info migrate info -url="${{ env.JDBC_QA }}"
+        env:
+          FLYWAY_CLEAN_DISABLED: true
+
+  # --------------------------------------------------------------- stage: Report
+  # Promotion preview for the reviewer of the pull request into Production.
+  # Nothing is deployed to Production here. Remove this job to disable.
+  report:
+    name: Production Check Report
+    runs-on: self-hosted
+    needs: deploy-qa
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
         with:
-          target-url: ${{ env.JDBC_QA }}
-          target-user: ${{ env.DB_USER_QA }}
-          target-password: ${{ env.DB_USER_PW_QA }}
-          deployment-report-name: flyway-qa-deployment-report
+          clean: true
+
+      - name: Setup Flyway
+        uses: red-gate/setup-flyway@v3
+        with:
+          version: "13.4.0"
+          edition: enterprise
+          i-agree-to-the-eula: true
+          email: ${{ env.EMAIL }}
+          token: ${{ env.TOKEN }}
+
+      - name: Production Check Report
+        run: >-
+          ${{ env.FLYWAY }} ${{ env.PROD_LOGIN }} ${{ env.CHECK_LOGIN }}
+          check -code -changes -drift -dryrun -url="${{ env.JDBC_PROD1 }}"
+          -environments.check.url="${{ env.JDBC_CHECK }}"
+          -environments.check.flyway.cleanDisabled=false
+          -check.buildEnvironment="check"
+          -reportFilename="${{ github.workspace }}\reports\Prod-${{ github.run_id }}-Check-Report.html"
+        env:
+          FLYWAY_CLEAN_DISABLED: true
+          FLYWAY_ENV_NATIVE_SQLFLUFF: true
+
+      - name: Publish Production Check Report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: prod-check-report
+          path: ${{ github.workspace }}/reports/
+          if-no-files-found: warn

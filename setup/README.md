@@ -2,9 +2,19 @@
 
 Everything needed to make the three workflows in `.github/workflows/` run against real databases.
 
-The workflows are the official Redgate samples from
-[Flyway-Sample-Pipelines/github-actions/workflows/flyway-actions](https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/github-actions/workflows/flyway-actions),
-used unmodified. Everything below exists to satisfy what they expect.
+The workflows are a GitHub Actions port of Redgate's
+[Flyway-Sample-Pipelines/Azure/Simple-Workflow](https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/Azure/Simple-Workflow):
+same stages, same Flyway CLI commands, same variables. Azure stages are GitHub jobs chained with
+`needs`; Azure variable groups are repo Variables/Secrets; the Azure `ManualValidation` stage is the
+`production` GitHub Environment with a required reviewer; `PublishBuildArtifacts` is
+`actions/upload-artifact`. `red-gate/setup-flyway` installs Flyway 13.4.0 on the runner per job, so
+nothing has to be pre-installed.
+
+| Workflow | Stages (jobs) |
+|---|---|
+| `deploy-build.yml` | **Build Database** (info clean info → migrate info → undo info to `FIRST_UNDO_SCRIPT`) → **QA Check Report** (check -code -changes -drift -dryrun vs QA, artifact `qa-check-report`) |
+| `deploy-qa.yml` | **Deploy QA** (info migrate info) → **Production Check Report** (promotion preview vs Prod1, artifact `prod-check-report`) |
+| `deploy-prod.yml` | **Production Check Report** (vs Prod1) → **Deploy Prod** (waits for approval on the `production` environment) → **Deploy Prod2** (second tenant, sequential) |
 
 ---
 
@@ -93,6 +103,7 @@ displayName = "Shadow database"
 | Variable | Value |
 |---|---|
 | `USER_EMAIL` | your Redgate account email |
+| `BASELINE_VERSION` | `001.20260925101351` — version of the B001 baseline migration (Azure `BASELINE_VERSION`) |
 | `JDBC_BUILD` | `jdbc:sqlserver://localhost;databaseName=Northwind_Build;encrypt=true;trustServerCertificate=true` |
 | `JDBC_QA` | `jdbc:sqlserver://localhost;databaseName=Northwind_QA;encrypt=true;trustServerCertificate=true` |
 | `JDBC_CHECK` | `jdbc:sqlserver://localhost;databaseName=Northwind_Check;encrypt=true;trustServerCertificate=true` |
@@ -135,12 +146,8 @@ All three workflows use `runs-on: self-hosted`, so a runner must be registered t
 *Settings > Actions > Runners > New self-hosted runner* (Windows). Install it as a service.
 
 The runner does **not** need Flyway pre-installed — `red-gate/setup-flyway@v3` downloads and
-licenses Flyway 13.4.0 per job. It does need:
-
-- **Git for Windows** — each workflow prepends Git Bash to `PATH` because the Redgate actions run
-  their steps under `shell: bash`.
-- **PowerShell 7 (`pwsh`)**, installed machine-wide — the "Add Git Bash to PATH" step uses
-  `shell: pwsh`. Windows PowerShell 5.1 is not enough; the job fails with `pwsh: command not found`.
+licenses Flyway 13.4.0 per job. Steps run under `shell: cmd`, like Azure `script` steps on a
+Windows agent, so no Git Bash or PowerShell 7 requirement.
 
 ---
 
@@ -157,11 +164,14 @@ creating a branch does not by itself trigger a run — the next push that touche
 
 ---
 
-## 6. Approval gate (optional)
+## 6. Approval gate
 
-`deploy-prod.yml` ships with no approval gate — the upstream sample only comments on the option.
-To add one: create a `production` GitHub Environment with required reviewers, then add
-`environment: production` to the `flyway-deploy-prod-1` and `flyway-deploy-prod-2` jobs. Leave
-`flyway-report` outside it so reviewers can read the report before approving.
+`deploy-prod.yml` mirrors the Azure sample's **Approve Production Release** stage with a GitHub
+Environment: the `Deploy Prod` job has `environment: production`, and that environment
+(*Settings > Environments > production*) has **Required reviewers** set. The run pauses after the
+report job; open the run, read the `prod-check-report` artifact, then *Review deployments* → approve.
+`Deploy Prod2` only runs after `Deploy Prod` succeeds.
 
-This is the one change worth making to the upstream files. It's deliberately not applied yet.
+The environment also has a deployment branch rule allowing only `Production`. Both were created
+with the GitHub API; to recreate by hand: create environment `production`, tick *Required
+reviewers* and add yourself, and under *Deployment branches* add the `Production` branch.

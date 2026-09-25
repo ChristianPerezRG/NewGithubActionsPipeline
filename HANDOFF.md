@@ -11,9 +11,9 @@ the source of truth** and all migration scripts generated from it (Flyway Deskto
 
 ```
 .github/workflows/
-  deploy-build.yml     # Development branch -> Build DB (clean/migrate/undo) + QA check report
-  deploy-qa.yml        # QA branch          -> QA DB
-  deploy-prod.yml      # Production branch  -> report vs Prod2, then Prod1 + Prod2
+  deploy-build.yml     # Development -> Build Database job, then QA Check Report job
+  deploy-qa.yml        # QA          -> Deploy QA job, then Production Check Report job
+  deploy-prod.yml      # Production  -> Production Check Report -> Deploy Prod (approval) -> Deploy Prod2
 schema-model/          # SOURCE OF TRUTH. Northwind + loyalty change. Tables/, Views/, Stored Procedures/
 migrations/            # GENERATED from schema-model, in this order:
   B001_20260925101351__baseline.sql              # baseline (schema only), from the model vs empty shadow
@@ -41,12 +41,16 @@ Order matters and mirrors what a developer does in Flyway Desktop:
 
 An earlier iteration hand-wrote V001/V002/U002 with data. That was thrown away.
 
-### The three workflows are upstream files, used verbatim
+### The three workflows are a port of the Azure Simple-Workflow sample
 
-They come from
-[red-gate/Flyway-Sample-Pipelines → github-actions/workflows/flyway-actions](https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/github-actions/workflows/flyway-actions)
-and are **not to be rewritten**. They use `red-gate/setup-flyway@v3` (pinned to Flyway 13.4.0) plus
-`red-gate/flyway-actions@v2`. If something doesn't line up, change the supporting config — not the workflows.
+Per the user's request they mirror
+[red-gate/Flyway-Sample-Pipelines → Azure/Simple-Workflow](https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/Azure/Simple-Workflow)
+stage for stage and command for command (plain Flyway CLI: `info clean info`, `migrate info`,
+`undo info`, `check -code -changes -drift -dryrun`). `red-gate/setup-flyway@v3` (pinned to 13.4.0)
+installs the CLI per job. The manual approval is the `production` GitHub Environment (required
+reviewer: ChristianPerezRG; deployment branch rule: `Production`). `workflow_dispatch` is enabled
+on all three so they can be queued manually like Azure pipelines. See `setup/README.md` §0 and §6.
+An earlier iteration used the `flyway-actions` composite-action samples verbatim; replaced.
 
 ---
 
@@ -66,7 +70,7 @@ and are **not to be rewritten**. They use `red-gate/setup-flyway@v3` (pinned to 
 
 ### GitHub repo state
 
-- **Variables:** `USER_EMAIL`, `JDBC_BUILD`, `JDBC_QA`, `JDBC_CHECK`, `JDBC_PROD1`, `JDBC_PROD2`
+- **Variables:** `USER_EMAIL`, `BASELINE_VERSION`, `JDBC_BUILD`, `JDBC_QA`, `JDBC_CHECK`, `JDBC_PROD1`, `JDBC_PROD2`
 - **Secrets:** `FLYWAY_TOKEN`, `FIRST_UNDO_SCRIPT` (= `002.20260925101444`), `DB_USER_*` (= `sa`) and
   `DB_USER_PW_*` for BUILD/QA/CHECK/PROD1/PROD2
 - Branches: `main` is the integration branch; `Development`, `QA`, `Production` trigger the pipelines.
