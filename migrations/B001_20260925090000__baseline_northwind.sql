@@ -4,11 +4,11 @@ SET ANSI_PADDING, ANSI_WARNINGS, CONCAT_NULL_YIELDS_NULL, ARITHABORT, QUOTED_IDE
 GO
 
 /*
-    V001 - Northwind baseline.
+    B001 - Northwind baseline (Flyway baseline migration).
 
     The complete Northwind schema and reference data. This is the state that
     Northwind_QA, _Prod1 and _Prod2 are seeded to by setup/provision.ps1, so
-    those environments are baselined here rather than replaying this script.
+    those environments are baselined here rather than replaying this script. As a B (baseline) migration, Flyway runs it only on empty databases (Build, Check) and skips it on databases baselined at this version.
 
     Northwind_Build starts empty and builds the whole schema from this file
     on every run, which is what makes the build pipeline a real test.
@@ -16,7 +16,7 @@ GO
     Source: Microsoft Northwind sample database (instnwnd.sql).
 */
 
-PRINT N'V001: creating Northwind baseline schema and data'
+PRINT N'B001: creating Northwind baseline schema and data'
 GO
 
 /*
@@ -9372,5 +9372,5 @@ GO
 
 GO
 
-PRINT N'V001: baseline complete'
+PRINT N'B001: baseline complete'
 GO

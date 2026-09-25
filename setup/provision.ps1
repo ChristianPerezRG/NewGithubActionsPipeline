@@ -9,7 +9,7 @@
     Prod1  - seeded with Northwind. Represents a deployed environment.
     Prod2  - seeded with Northwind. Represents a deployed environment.
 
-    The three seeded databases end up at the state described by migration V001,
+    The three seeded databases end up at the state described by baseline migration B001,
     so the pipeline baselines them there and applies V002 onward as pending work.
 
 .EXAMPLE

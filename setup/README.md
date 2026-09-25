@@ -21,7 +21,7 @@ used unmodified. Everything below exists to satisfy what they expect.
 | `Northwind_Prod2` | seeded with Northwind | `deploy-prod.yml`, and the target of the prod check report |
 
 Build and Check start **empty** on purpose — they're throwaway. QA and the two Prods start at
-the `V001` state so that `V002` is genuinely pending against them.
+the `B001` state so that `V002` is genuinely pending against them.
 
 ```powershell
 cd setup
@@ -58,7 +58,7 @@ If it isn't, swap in the machine name or IP.
 | Secret | Value |
 |---|---|
 | `FLYWAY_TOKEN` | Flyway Enterprise personal access token from the Redgate portal |
-| `FIRST_UNDO_SCRIPT` | `001.20260925090000` |
+| `FIRST_UNDO_SCRIPT` | `002.20260925091500` |
 | `DB_USER_BUILD` | `sa` |
 | `DB_USER_PW_BUILD` | your `sa` password |
 | `DB_USER_QA` | `sa` |

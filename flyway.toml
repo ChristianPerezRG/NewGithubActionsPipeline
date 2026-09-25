@@ -39,16 +39,21 @@ mixed = true
 # Baseline an already-populated database on first run rather than failing.
 baselineOnMigrate = true
 
-# QA, Prod1 and Prod2 are seeded to the V001 state by setup/provision.ps1, so they
-# must baseline AT V001 — otherwise Flyway treats V001 as pending and fails trying
+# QA, Prod1 and Prod2 are seeded to the B001 state by setup/provision.ps1, so they
+# must baseline AT 001 — otherwise Flyway treats B001 as pending and fails trying
 # to create objects that already exist.
 #
 # Flyway reads '_' in a filename as a version separator, so
-# V001_20260925090000__baseline_northwind.sql has version 001.20260925090000.
-# This must match exactly. Update it if V001 is ever renamed.
+# B001_20260925090000__baseline_northwind.sql has version 001.20260925090000.
+# This must match exactly. Update it if B001 is ever renamed.
+#
+# B001 is a Flyway *baseline migration* (B prefix), not a versioned one. Flyway runs it
+# only when building an empty database (Build, Check) and skips it on databases that
+# are baselined at this version (QA, Prod). A plain V001 would break check reports:
+# Flyway could not rebuild the Check DB to match a baselined target.
 baselineVersion = "001.20260925090000"
 
-# Reject anything that doesn't match V{version}_{timestamp}__{description}.sql
+# Reject anything that doesn't match {V,U,B}{version}_{timestamp}__{description}.sql
 validateMigrationNaming = true
 
 # Safety lock. deploy-build.yml overrides this for the Build environment only, via
