@@ -1,0 +1,18 @@
+# Local connection details and credentials — never commit
+flyway.user.toml
+
+# Flyway output
+reports/
+*.html
+report.json
+/target/
+
+# Flyway Desktop working files
+.flyway/
+**/deployments/
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
+.vs/
+.vscode/

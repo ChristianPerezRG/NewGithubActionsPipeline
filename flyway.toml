@@ -1,0 +1,63 @@
+# Shared Flyway project config. Committed.
+# Local-only JDBC URLs and credentials belong in flyway.user.toml, which is gitignored.
+#
+# The pipelines pass connection details in as action inputs (target-url, target-user,
+# target-password), which override anything set here. The environments below exist so
+# the workflows have something to name and so Flyway Desktop can use the same project.
+
+# QA and Production jobs don't set target-environment, so the actions fall back to
+# 'default'. The URL is supplied by the workflow at run time.
+[environments.default]
+
+# Referenced by deploy-build.yml as target-environment: build.
+# provisioner = "clean" is REQUIRED — the Migrate Build step uses
+# provision-mode: reprovision, which runs this provisioner to wipe the Build
+# database before rebuilding it. Without it, that step won't clean anything.
+[environments.build]
+provisioner = "clean"
+
+# Referenced by deploy-build.yml and deploy-prod.yml as build-environment: check.
+# The throwaway database the check reports build the comparison against. Those
+# steps pass build-ok-to-erase: true, so Flyway is allowed to wipe it each run.
+[environments.check]
+
+# Local development environments — URLs live in flyway.user.toml.
+[environments.development]
+
+[environments.shadow]
+provisioner = "clean"
+
+[flyway]
+locations = ["filesystem:migrations"]
+
+# Migrations can land out of sequence when feature branches merge independently.
+outOfOrder = true
+
+# The Northwind baseline mixes DDL and DML in one script, so both must be allowed.
+mixed = true
+
+# Baseline an already-populated database on first run rather than failing.
+baselineOnMigrate = true
+
+# QA, Prod1 and Prod2 are seeded to the V001 state by setup/provision.ps1, so they
+# must baseline AT V001 — otherwise Flyway treats V001 as pending and fails trying
+# to create objects that already exist.
+#
+# Flyway reads '_' in a filename as a version separator, so
+# V001_20260925090000__baseline_northwind.sql has version 001.20260925090000.
+# This must match exactly. Update it if V001 is ever renamed.
+baselineVersion = "001.20260925090000"
+
+# Reject anything that doesn't match V{version}_{timestamp}__{description}.sql
+validateMigrationNaming = true
+
+# Safety lock. deploy-build.yml overrides this for the Build environment only, via
+# -environments.build.flyway.cleanDisabled=false. Nothing else should override it.
+cleanDisabled = true
+
+# Flyway Desktop maintains the sections below — regenerate rather than hand-edit.
+# [redgateCompare]
+# filterFile = "Filter.scpf"
+#
+# [redgateCompare.sqlserver.options.behavior]
+# undoScripts = true
