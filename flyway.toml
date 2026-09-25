@@ -19,9 +19,6 @@ outOfOrder = true
 schemaModelLocation = "schema-model"
 validateMigrationNaming = true
 
-[flyway.check]
-majorTolerance = 0
-
 [flyway.sqlserver.clean]
 mode = "all"
 
