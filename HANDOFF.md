@@ -106,6 +106,7 @@ and are **not to be rewritten**. They use `red-gate/setup-flyway@v3` (pinned to 
 - **Flyway Desktop rewrites `flyway.toml` on first open** (drops comments, reorders keys, adds `id`). On 2026-09-25 it also left a fragment of the old file after its own content, producing "Error parsing config file ... filterFile". Fix: keep its normalized version and delete everything after `[redgateCompare]`.
 
 ---
+- **Old Flyway Desktop writes `[flyway.check] majorTolerance = 0`**, which Flyway 13 rejects ("Removed: flyway.check.majorTolerance"). The pipelines pin 13.4.0, so delete that section if it reappears, and update Flyway Desktop.
 
 ## Open questions
 

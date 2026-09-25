@@ -18,9 +18,6 @@ outOfOrder = true
 schemaModelLocation = "schema-model"
 validateMigrationNaming = true
 
-[flyway.check]
-majorTolerance = 0
-
 [flywayDesktop]
 developmentEnvironment = "development"
 schemaModel = "schema-model"
