@@ -5,7 +5,8 @@ CREATE TABLE [dbo].[CustomerLoyaltyLog]
 [PreviousTier] [nvarchar] (20) NULL,
 [NewTier] [nvarchar] (20) NOT NULL,
 [ChangedAtUtc] [datetime2] (0) NOT NULL CONSTRAINT [DF_CustomerLoyaltyLog_ChangedAtUtc] DEFAULT (sysutcdatetime()),
-[Notes] [nvarchar] (200) NULL
+[Notes] [nvarchar] (200) NULL,
+[Reason] [nvarchar] (100) NULL
 )
 GO
 ALTER TABLE [dbo].[CustomerLoyaltyLog] ADD CONSTRAINT [PK_CustomerLoyaltyLog] PRIMARY KEY CLUSTERED ([LoyaltyLogID])
