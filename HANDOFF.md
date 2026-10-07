@@ -11,7 +11,7 @@ the source of truth** and all migration scripts generated from it (Flyway Deskto
 
 ```
 .github/workflows/
-  deploy-build.yml     # TRIGGERED (push to main touching migrations/**): Build Database -> QA Check Report -> calls deploy-qa -> calls deploy-prod
+  deploy-build.yml     # TRIGGERED: PR into Dev = Build + QA report only; push to Dev (merged PR) = full pipeline. Calls deploy-qa then deploy-prod
   deploy-qa.yml        # workflow_call: Deploy QA -> Production Check Report
   deploy-prod.yml      # workflow_call: Production Check Report -> [approval] -> Deploy Prod
 schema-model/          # SOURCE OF TRUTH. Northwind + loyalty change. Tables/, Views/, Stored Procedures/
@@ -76,7 +76,8 @@ are dormant (no workflow files) and can be deleted.
 - **Variables:** `USER_EMAIL`, `BASELINE_VERSION`, `JDBC_BUILD`, `JDBC_QA`, `JDBC_CHECK`, `JDBC_PROD1`, `JDBC_PROD2`
 - **Secrets:** `FLYWAY_TOKEN`, `FIRST_UNDO_SCRIPT` (= `002.20260925101444`), `DB_USER_*` (= `sa`) and
   `DB_USER_PW_*` for BUILD/QA/CHECK/PROD1/PROD2
-- Branches: `main` is the only branch that triggers the pipeline.
+- Branches: `Dev` is the default branch and the only trigger (customer flow: feature branch -> PR -> merge into Dev).
+  `main` is a stable copy. Old `Development`/`QA`/`Production` branches deleted 2026-10-07.
 
 ---
 
@@ -114,6 +115,15 @@ are dormant (no workflow files) and can be deleted.
 
 ---
 - **Old Flyway Desktop writes `[flyway.check] majorTolerance = 0`**, which Flyway 13 rejects ("Removed: flyway.check.majorTolerance"). The pipelines pin 13.4.0, so delete that section if it reappears, and update Flyway Desktop.
+
+## Customer requirements (2026-10-07)
+
+- Developers push to a feature branch; a PR from feature -> `Dev` is reviewed and merged; the
+  merge kicks off the migration pipeline. Implemented: `pull_request` -> Dev runs Build + QA
+  report only; `push` -> Dev runs everything. `concurrency` serializes runs.
+- GitHub Actions, SQL Server for the delivered example; Postgres later. Workflows are DB-agnostic;
+  `setup/README.md` §7 lists the Postgres deltas (separate Flyway Desktop project, JDBC URLs,
+  `schemas`, drop `errorOverrides`, Linux runner shell/paths if applicable).
 
 ## Open questions
 

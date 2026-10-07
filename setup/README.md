@@ -10,13 +10,20 @@ Variables/Secrets; the Azure `ManualValidation` stage is the `production` GitHub
 required reviewer; `PublishBuildArtifacts` is `actions/upload-artifact`. `red-gate/setup-flyway`
 installs Flyway 13.4.0 on the runner per job, so nothing is pre-installed.
 
-**One run, not three.** `deploy-build.yml` is the only file with a push trigger. After its Build
+**One run, not three.** `deploy-build.yml` is the only file with push/pull_request triggers. After its Build
 stages pass it calls `deploy-qa.yml`, then `deploy-prod.yml`, as reusable workflows
 (`workflow_call`), so every stage shows on a single run page - no clicking from Build to QA to
 Production. `deploy-qa.yml` / `deploy-prod.yml` can still be queued alone with *Run workflow*.
 
-**Trigger:** a push to `main` that touches `migrations/**` (i.e. committing a generated migration
-script), or *Run workflow* on "Flyway Pipeline".
+**Branch flow and triggers** (`migrations/**` must have changed in both cases):
+
+| Event | What runs |
+|---|---|
+| Pull request from a feature branch **into `Dev`** | Build Database + QA Check Report only. Validates the scripts and attaches the QA report to the PR for the reviewer. Nothing is deployed. |
+| Pull request **merged into `Dev`** (a push to `Dev`) | The full pipeline: Build Database → QA Check Report → Deploy QA → Production Check Report → approval → Deploy Prod. |
+| *Run workflow* on "Flyway Pipeline" | Full pipeline, manually. |
+
+Runs are serialized (`concurrency: flyway-pipeline`) because Build and Check are shared databases.
 
 | File | Jobs |
 |---|---|
@@ -43,7 +50,8 @@ flyway.user.toml  <- gitignored. Your local development + shadow connection stri
 4. *Generate migrations* tab → Flyway Desktop compares the schema model with the **shadow**
    database (rebuilt from `migrations/`) and writes `V###_<timestamp>__desc.sql` plus the undo
    `U###_<timestamp>__desc.sql`.
-5. Commit + push to `main`. The push (it touches `migrations/**`) starts the pipeline.
+5. Commit to a **feature branch**, push, open a pull request into `Dev`. The PR runs the Build
+   stages and attaches the QA check report. Merging the PR starts the full pipeline.
 
 The same steps with the CLI (what produced the current contents):
 
@@ -157,9 +165,11 @@ Windows agent, so no Git Bash or PowerShell 7 requirement.
 
 ## 5. Branches
 
-`main` is the only branch the pipeline watches. Developers commit schema-model + generated
-migration changes from Flyway Desktop to `main` (directly or via pull request); the push starts the
-run. The older `Development` / `QA` / `Production` branches are no longer used and can be deleted.
+| Branch | Role |
+|---|---|
+| `feature/*` (any name) | Developer work. Flyway Desktop commits (schema model + generated migrations) land here. |
+| `Dev` | Default branch and the pipeline trigger. Changes arrive only by merging a pull request. A merge runs Build → QA → approval → Production. |
+| `main` | Kept as a stable copy; not watched by the pipeline. Promote `Dev` → `main` however the team prefers. |
 
 Note: GitHub does not evaluate the `paths` filter on the *first* push of a brand-new branch.
 
@@ -171,6 +181,29 @@ Note: GitHub does not evaluate the `paths` filter on the *first* push of a brand
 production*) has **Required reviewers** set. The run pauses after the Production Check Report;
 open the run, read the `prod-check-report` artifact, then *Review deployments* → approve.
 
-The environment's deployment branch rules allow `main`. Both were created with the GitHub API;
+The environment's deployment branch rules allow `Dev` (and `main`). Both were created with the GitHub API;
 to recreate by hand: create environment `production`, tick *Required reviewers* and add
 yourself, and under *Deployment branches* add `main`.
+
+---
+
+## 7. Reusing this for PostgreSQL
+
+The workflows contain nothing SQL Server specific; the database comes from the JDBC URLs and
+`flyway.toml`. For a Postgres copy of this pipeline:
+
+- **Separate repo/project per database.** A Flyway Desktop project is one database type
+  (`databaseType` in `flyway.toml`), and the schema model format differs between SQL Server and
+  Postgres. Clone this repo and regenerate `schema-model/` + `B001` from the Postgres dev database.
+- **JDBC variables**: `jdbc:postgresql://<host>:5432/<db>` for `JDBC_BUILD/QA/CHECK/PROD1`; a
+  Postgres login per environment in the `DB_USER_*` / `DB_USER_PW_*` secrets. The Postgres driver
+  ships inside Flyway; nothing to install on the runner.
+- **Schemas**: Postgres environments should pin `schemas = ["public"]` (or the app schema) in
+  `flyway.toml`, otherwise `clean` and the check reports act on the login's default search path.
+- **`-errorOverrides=S0001:0:I-`** only matters for SQL Server `PRINT` output; it is harmless on
+  Postgres and can be removed from the `FLYWAY` variable.
+- **Undo scripts**: Flyway Desktop generates them for Postgres too; `FIRST_UNDO_SCRIPT` and
+  `BASELINE_VERSION` are set exactly the same way.
+- **Runner**: the steps use `shell: cmd` and Windows paths because the runner is Windows. On a
+  Linux runner switch the four `shell: cmd` lines to `bash` and the `\` in the two `-locations`
+  / `-configFiles` / `-reportFilename` paths to `/` (or let Flyway resolve relative paths).

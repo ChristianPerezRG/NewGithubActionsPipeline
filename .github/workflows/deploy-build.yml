@@ -5,17 +5,31 @@
 # Azure stages become jobs; Azure variable groups become repo Variables/Secrets;
 # PublishBuildArtifacts becomes actions/upload-artifact. Flyway commands are identical.
 #
-# Trigger: a push to main that touches migrations/** (a generated migration script).
+# Branch flow: developers push to a feature branch and open a pull request into Dev.
+#   - pull_request -> Dev : Build Database + QA Check Report only (validation for the reviewer)
+#   - push         -> Dev : the merge. Full pipeline: Build -> QA -> [approval] -> Production
+# Both only fire when migrations/** changed (a generated migration script).
 
 name: Flyway Pipeline
 
 on:
   push:
     branches:
-      - main
+      - Dev
+    paths:
+      - "migrations/**"
+  pull_request:
+    branches:
+      - Dev
     paths:
       - "migrations/**"
   workflow_dispatch: # Azure pipelines can always be queued manually; this is the equivalent
+
+# One run at a time: the Build and Check databases are shared, so two merges landing
+# close together must not clean them concurrently. Later runs queue, nothing is cancelled.
+concurrency:
+  group: flyway-pipeline
+  cancel-in-progress: false
 
 env:
   # Repository Variables - Settings > Secrets and variables > Actions > Variables
@@ -137,8 +151,10 @@ jobs:
   # ------------------------------------------------------------- next: deploy-qa.yml
   # Reusable-workflow call: deploy-qa.yml's jobs run inside THIS run, so Build, QA and
   # Production all show on one page. Equivalent of chaining the Azure pipelines.
+  # Deploy stages run only for the merge into Dev (push), never for a pull request.
   qa:
     name: QA
+    if: github.event_name != 'pull_request'
     needs: report
     uses: ./.github/workflows/deploy-qa.yml
     secrets: inherit
@@ -146,6 +162,7 @@ jobs:
   # ----------------------------------------------------------- next: deploy-prod.yml
   prod:
     name: Production
+    if: github.event_name != 'pull_request'
     needs: qa
     uses: ./.github/workflows/deploy-prod.yml
     secrets: inherit
